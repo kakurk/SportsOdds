@@ -1,0 +1,130 @@
+---
+title: "Longshot Favorite Bias Simulation"
+author: "Kyle Kurkela"
+date: "2024-01-31"
+output: 
+  html_document: 
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(RMariaDB)
+```
+
+```{r}
+# username and password for the database are saved to local text files to avoid
+# sharing them with the public
+DB.user <- read_file(file = 'user.txt')
+DB.pass <- read_file(file = 'password.txt')
+
+db <- dbConnect(MariaDB(), 
+                user = DB.user, 
+                password = DB.pass, 
+                dbname = 'oddsDB', 
+                host = 'localhost')
+```
+
+I read online that there exists a "longshot bias" in sports gambling. This bias is seen in data showing that bettors will lose more money when betting on long-shots than on favorites over a long enough time horizon. To see if this is the case in our data, I will run a simulation.
+
+In this simulation, I will bet 100 dollars an each and every bet and calculate the ROI of those bets made at different odds. IF the longshot bias exists, then we should see that there is a worse return on investment when betting on longshots/underdogs then when betting on favorites.
+
+```{sql, connection = db, output.var = 'Odds.Tbl.tidy'}
+SELECT bets.id, name, price, bookie_id, pfmatch_id, `timestamp`, pfmatches.results_id, results.home_team, results.away_team, results.home_team_score, results.away_team_score FROM bets
+LEFT JOIN pfmatches
+  on bets.pfmatch_id = pfmatches.id
+LEFT JOIN results
+  on pfmatches.results_id = results.id
+WHERE bookie_id IN ('draftkings', 'fanduel', 'pinnacle', 'wynnbet', 'pointsbetus', 'betmgm', 'betrivers')
+```
+
+What does the data from the above MySQL query look like?
+
+```{r}
+# only the first few rows
+head(Odds.Tbl.tidy)
+```
+
+Lets tidy up the results of that query:
+
+```{r}
+# Calculate Odds and LogOdds
+
+tmpFunc <- function(x, method = 'basic'){
+  implied::implied_probabilities(x, method = method) %>% 
+    magrittr::extract2('probabilities') %>% 
+    as.double()
+}
+
+Odds.Tbl.tidy %>%
+  as_tibble() %>%
+  mutate(pricePer = 1/price) %>%
+  group_by(pfmatch_id, timestamp, bookie_id) %>%
+  mutate(impliedOdds = tmpFunc(price)) %>%
+  mutate(Odds = pricePer/(1-pricePer)) %>%
+  mutate(logit = log(Odds)) -> Odds.Tbl.tidy
+
+# did bet win?
+Odds.Tbl.tidy %>%
+  mutate(win = case_when(name == home_team & home_team_score > away_team_score ~ TRUE,
+                         name == away_team & away_team_score > home_team_score ~ TRUE,
+                         .default = FALSE)) -> Odds.Tbl.tidy
+
+# Remove problematic lines
+Odds.Tbl.tidy %>%
+  filter(!is.infinite(Odds)) -> Odds.Tbl.tidy
+
+# sum contrasts
+Odds.Tbl.tidy %>%
+  mutate(bookie_id = factor(bookie_id)) -> Odds.Tbl.tidy
+
+contrasts(Odds.Tbl.tidy$bookie_id) <- contr.sum(n = 7)
+```
+
+```{r}
+bet <- function(price, event.outcome, stake = 100){
+  # make a 100$ bet. Return the outcome of that bet
+  if(event.outcome){
+    out <- price*stake-stake
+  } else {
+    out <- -stake
+  }
+  return(out)
+}
+
+# break the odds into 10 equally sized bins
+hh <- hist(Odds.Tbl.tidy$pricePer, breaks = quantile(Odds.Tbl.tidy$pricePer, 0:10/10), plot = FALSE)
+
+hh$breaks <- round(hh$breaks, 2)
+
+Odds.Tbl.tidy %>%
+  filter(!is.na(win)) %>%
+  mutate(outcome = map2_dbl(.x = price, .y = win, .f = bet)) %>%
+  mutate(bucket = case_when(pricePer >= hh$breaks[[1]] & pricePer < hh$breaks[[2]] ~ str_glue('[{hh$breaks[[1]]} - {hh$breaks[[2]]}]'),
+                            pricePer >= hh$breaks[[2]] & pricePer < hh$breaks[[3]] ~ str_glue('[{hh$breaks[[2]]} - {hh$breaks[[3]]}]'),
+                            pricePer >= hh$breaks[[3]] & pricePer < hh$breaks[[4]] ~ str_glue('[{hh$breaks[[3]]} - {hh$breaks[[4]]}]'),
+                            pricePer >= hh$breaks[[4]] & pricePer < hh$breaks[[5]] ~ str_glue('[{hh$breaks[[4]]} - {hh$breaks[[5]]}]'),
+                            pricePer >= hh$breaks[[5]] & pricePer < hh$breaks[[6]] ~ str_glue('[{hh$breaks[[5]]} - {hh$breaks[[6]]}]'),
+                            pricePer >= hh$breaks[[6]] & pricePer < hh$breaks[[7]] ~ str_glue('[{hh$breaks[[6]]} - {hh$breaks[[7]]}]'),
+                            pricePer >= hh$breaks[[7]] & pricePer < hh$breaks[[8]] ~ str_glue('[{hh$breaks[[7]]} - {hh$breaks[[8]]}]'),
+                            pricePer >= hh$breaks[[8]] & pricePer < hh$breaks[[9]] ~ str_glue('[{hh$breaks[[8]]} - {hh$breaks[[9]]}]'),
+                            pricePer >= hh$breaks[[9]] & pricePer < hh$breaks[[10]] ~ str_glue('[{hh$breaks[[9]]} - {hh$breaks[[10]]}]'),
+                            pricePer >= hh$breaks[[10]] & pricePer <= hh$breaks[[11]] ~ str_glue('[{hh$breaks[[10]]} - {hh$breaks[[11]]}]'))) -> tmp
+
+tmp %>%
+  filter(!is.na(bucket)) -> tmp
+```
+
+```{r}
+ggplot(tmp, aes(x = bucket, y = outcome)) +
+  geom_hline(yintercept = 0, color = 'blue') +
+  stat_summary(fun.data = mean_se, geom = 'crossbar') +
+  theme(axis.text.x = element_text(angle = 90)) +
+  facet_wrap(~bookie_id) +
+  labs(title = 'Longshot Bias',
+       subtitle = 'Win/Loss when betting on NFL Moneylines in Different Price Brackets', 
+       y = 'Average Gain/Loss on a 100$ Bet')
+```
+
+Over the last 4 years, the longest of long shots appear to be the worst bets you can make. On average, these bets lost 10\$ for every 100\$ bet. There doesn't appear to be much difference between the NY sports books.

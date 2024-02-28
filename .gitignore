@@ -1,0 +1,8 @@
+*.html
+.Rhistory
+.Rproj.user
+password.txt
+user.txt
+saveDir.txt
+*.Rproj
+apiKey.txt
