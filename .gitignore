@@ -6,3 +6,5 @@ user.txt
 saveDir.txt
 *.Rproj
 apiKey.txt
+04_glmPredict_files/*
+05_longshot_favorite_bias_simulation_files/*

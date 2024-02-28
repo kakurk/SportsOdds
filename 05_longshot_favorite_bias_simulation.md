@@ -1,17 +1,9 @@
----
-title: "Longshot Favorite Bias Simulation"
-author: "Kyle Kurkela"
-date: "2024-01-31"
-output: github_document
----
+Longshot Favorite Bias Simulation
+================
+Kyle Kurkela
+2024-01-31
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-library(tidyverse)
-library(RMariaDB)
-```
-
-```{r}
+``` r
 # username and password for the database are saved to local text files to avoid
 # sharing them with the public
 DB.user <- read_file(file = 'user.txt')
@@ -24,11 +16,18 @@ db <- dbConnect(MariaDB(),
                 host = 'localhost')
 ```
 
-I read online that there exists a "longshot bias" in sports gambling. This bias is seen in data showing that bettors will lose more money when betting on long-shots than on favorites over a long enough time horizon. To see if this is the case in our data, I will run a simulation.
+I read online that there exists a “longshot bias” in sports gambling.
+This bias is seen in data showing that bettors will lose more money when
+betting on long-shots than on favorites over a long enough time horizon.
+To see if this is the case in our data, I will run a simulation.
 
-In this simulation, I will bet 100 dollars an each and every bet and calculate the ROI of those bets made at different odds. IF the longshot bias exists, then we should see that there is a worse return on investment when betting on longshots/underdogs then when betting on favorites.
+In this simulation, I will bet 100 dollars an each and every bet and
+calculate the ROI of those bets made at different odds. IF the longshot
+bias exists, then we should see that there is a worse return on
+investment when betting on longshots/underdogs then when betting on
+favorites.
 
-```{sql, connection = db, output.var = 'Odds.Tbl.tidy'}
+``` sql
 SELECT bets.id, name, price, bookie_id, pfmatch_id, `timestamp`, pfmatches.results_id, results.home_team, results.away_team, results.home_team_score, results.away_team_score FROM bets
 LEFT JOIN pfmatches
   on bets.pfmatch_id = pfmatches.id
@@ -39,14 +38,43 @@ WHERE bookie_id IN ('draftkings', 'fanduel', 'pinnacle', 'wynnbet', 'pointsbetus
 
 What does the data from the above MySQL query look like?
 
-```{r}
+``` r
 # only the first few rows
 head(Odds.Tbl.tidy)
 ```
 
+    ##                                 id                 name price   bookie_id
+    ## 1 0000d663edbbb09e06fd383f2c27a0a0    Green Bay Packers  3.15     fanduel
+    ## 2 00011d5b530bdd59fba17b231ab0eddd     Cleveland Browns  2.55      betmgm
+    ## 3 0007f3b87d193f5a4d22487b38944a7d Tampa Bay Buccaneers  3.07     wynnbet
+    ## 4 000b4ec432a0bb8859eac9540c8c6d52      New York Giants  5.35 pointsbetus
+    ## 5 000ca60089eec76111124bfba098d89d Jacksonville Jaguars  2.75     wynnbet
+    ## 6 001165a79f00a8fbd0c6822e88238640       Miami Dolphins  2.68     fanduel
+    ##                         pfmatch_id           timestamp
+    ## 1 fed9bbf95a14428f10feee2cad9f7068 2023-11-29 23:55:39
+    ## 2 67e7b19f194b1cc4b653f6bd45b6521a 2022-10-26 22:55:39
+    ## 3 b3763a6d678b9787e27cec3272252e24 2023-09-06 22:55:41
+    ## 4 5b0bf9c1161d097a11f36d3a768f2a4b 2020-12-23 23:55:00
+    ## 5 fe7ef98f1aa49c05a3b85fd964e0edf8 2022-12-14 23:55:39
+    ## 6 eb73da4463fddd6bd3ea0c3c5b70b9ba 2021-09-22 22:55:00
+    ##                         results_id            home_team            away_team
+    ## 1 bac9083d1cd126ed6f88f9780b7208f2    Green Bay Packers   Kansas City Chiefs
+    ## 2 65730f80060efef5eb4ba553538f5db3     Cleveland Browns   Cincinnati Bengals
+    ## 3 ee2ecc029bcf89e4da57e1cac5e118d1    Minnesota Vikings Tampa Bay Buccaneers
+    ## 4 b3c638e5ea80cf2119de2a5ca190fd80     Baltimore Ravens      New York Giants
+    ## 5 61b2d041bfe5e61dd94f2e9f3b4062bc Jacksonville Jaguars       Dallas Cowboys
+    ## 6 433f2fcc6cf0bf416195d4865932fd08    Las Vegas Raiders       Miami Dolphins
+    ##   home_team_score away_team_score
+    ## 1              27              19
+    ## 2              32              13
+    ## 3              17              20
+    ## 4              27              13
+    ## 5              40              34
+    ## 6              31              28
+
 Lets tidy up the results of that query:
 
-```{r}
+``` r
 # Calculate Odds and LogOdds
 
 tmpFunc <- function(x, method = 'basic'){
@@ -80,7 +108,7 @@ Odds.Tbl.tidy %>%
 contrasts(Odds.Tbl.tidy$bookie_id) <- contr.sum(n = 7)
 ```
 
-```{r}
+``` r
 bet <- function(price, event.outcome, stake = 100){
   # make a 100$ bet. Return the outcome of that bet
   if(event.outcome){
@@ -114,7 +142,7 @@ tmp %>%
   filter(!is.na(bucket)) -> tmp
 ```
 
-```{r}
+``` r
 ggplot(tmp, aes(x = bucket, y = outcome)) +
   geom_hline(yintercept = 0, color = 'blue') +
   stat_summary(fun.data = mean_se, geom = 'crossbar') +
@@ -125,4 +153,8 @@ ggplot(tmp, aes(x = bucket, y = outcome)) +
        y = 'Average Gain/Loss on a 100$ Bet')
 ```
 
-Over the last 4 years, the longest of long shots appear to be the worst bets you can make. On average, these bets lost 10\$ for every 100\$ bet. There doesn't appear to be much difference between the NY sports books.
+![](05_longshot_favorite_bias_simulation_files/figure-gfm/unnamed-chunk-6-1.png)<!-- -->
+
+Over the last 4 years, the longest of long shots appear to be the worst
+bets you can make. On average, these bets lost 10\$ for every 100\$ bet.
+There doesn’t appear to be much difference between the NY sports books.
